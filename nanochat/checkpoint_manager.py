@@ -10,6 +10,7 @@ import torch
 
 from nanochat.common import get_base_dir
 from nanochat.gpt import GPT, GPTConfig
+from nanochat.mamba import MambaModel, MambaConfig
 from nanochat.tokenizer import get_tokenizer
 from nanochat.common import setup_default_logging
 
@@ -55,7 +56,7 @@ def load_checkpoint(checkpoint_dir, step, device, load_optimizer=False):
     return model_data, optimizer_data, meta_data
 
 
-def build_model(checkpoint_dir, step, device, phase):
+def build_model(checkpoint_dir, step, device, phase, model_type="gpt"):
     """
     A bunch of repetitive code to build a model from a given checkpoint.
     Returns:
@@ -68,10 +69,18 @@ def build_model(checkpoint_dir, step, device, phase):
     # Hack: fix torch compile issue, which prepends all keys with _orig_mod.
     model_data = {k.lstrip("_orig_mod."): v for k, v in model_data.items()}
     model_config_kwargs = meta_data["model_config"]
-    log0(f"Building model with config: {model_config_kwargs}")
-    model_config = GPTConfig(**model_config_kwargs)
-    with torch.device("meta"):
-        model = GPT(model_config)
+    log0(f"Building {model_type} model with config: {model_config_kwargs}")
+    
+    # Create the appropriate model based on type
+    if model_type == "mamba":
+        model_config = MambaConfig(**model_config_kwargs)
+        with torch.device("meta"):
+            model = MambaModel(model_config)
+    else:  # default to GPT
+        model_config = GPTConfig(**model_config_kwargs)
+        with torch.device("meta"):
+            model = GPT(model_config)
+    
     # Load the model state
     model.to_empty(device=device)
     model.init_weights() # note: this is dumb, but we need to init the rotary embeddings. TODO: fix model re-init
@@ -119,7 +128,7 @@ def find_last_step(checkpoint_dir):
 # -----------------------------------------------------------------------------
 # convenience functions that take into account nanochat's directory structure
 
-def load_model_from_dir(checkpoints_dir, device, phase, model_tag=None, step=None):
+def load_model_from_dir(checkpoints_dir, device, phase, model_tag=None, step=None, model_type="gpt"):
     if model_tag is None:
         # guess the model tag by defaulting to the largest model
         model_tag = find_largest_model(checkpoints_dir)
@@ -130,17 +139,30 @@ def load_model_from_dir(checkpoints_dir, device, phase, model_tag=None, step=Non
         step = find_last_step(checkpoint_dir)
     assert step is not None, f"No checkpoints found in {checkpoint_dir}"
     # build the model
-    log0(f"Loading model from {checkpoint_dir} with step {step}")
-    model, tokenizer, meta_data = build_model(checkpoint_dir, step, device, phase)
+    log0(f"Loading {model_type} model from {checkpoint_dir} with step {step}")
+    model, tokenizer, meta_data = build_model(checkpoint_dir, step, device, phase, model_type)
     return model, tokenizer, meta_data
 
 def load_model(source, *args, **kwargs):
-    model_dir = {
-        "base": "base_checkpoints",
-        "mid": "mid_checkpoints",
-        "sft": "chatsft_checkpoints",
-        "rl": "chatrl_checkpoints",
-    }[source]
+    # Extract model_type if provided, default to gpt
+    model_type = kwargs.pop('model_type', 'gpt')
+    
+    # Handle model_type specific directory mapping for mamba models
+    if model_type == "mamba":
+        model_dir = {
+            "base": "base_checkpoints",  # Will look for mamba_d20 subdirectory
+            "mid": "mid_checkpoints",
+            "sft": "chatsft_checkpoints", 
+            "rl": "chatrl_checkpoints",
+        }[source]
+    else:
+        model_dir = {
+            "base": "base_checkpoints",
+            "mid": "mid_checkpoints",
+            "sft": "chatsft_checkpoints",
+            "rl": "chatrl_checkpoints",
+        }[source]
+    
     base_dir = get_base_dir()
     checkpoints_dir = os.path.join(base_dir, model_dir)
-    return load_model_from_dir(checkpoints_dir, *args, **kwargs)
+    return load_model_from_dir(checkpoints_dir, *args, model_type=model_type, **kwargs)

@@ -17,12 +17,13 @@ parser.add_argument('-s', '--step', type=int, default=None, help='Step to load')
 parser.add_argument('-p', '--prompt', type=str, default='', help='Prompt the model, get a single response back')
 parser.add_argument('-t', '--temperature', type=float, default=0.6, help='Temperature for generation')
 parser.add_argument('-k', '--top-k', type=int, default=50, help='Top-k sampling parameter')
+parser.add_argument('--model_type', type=str, default="gpt", help='Model type: gpt|mamba')
 args = parser.parse_args()
 
 # Init the model and tokenizer
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
 autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
-model, tokenizer, meta = load_model(args.source, device, phase="eval", model_tag=args.model_tag, step=args.step)
+model, tokenizer, meta = load_model(args.source, device, phase="eval", model_tag=args.model_tag, step=args.step, model_type=args.model_type)
 
 # Special tokens for the chat state machine
 bos = tokenizer.get_bos_token_id()

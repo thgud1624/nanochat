@@ -32,6 +32,25 @@ python -m scripts.chat_web
 
 And then visit the URL shown. Make sure to access it correctly, e.g. on Lambda use the public IP of the node you're on, followed by the port, so for example [http://209.20.xxx.xxx:8000/](http://209.20.xxx.xxx:8000/), etc. Then talk to your LLM as you'd normally talk to ChatGPT! Get it to write stories or poems. Ask it to tell you who you are to see a hallucination. Ask it why the sky is blue. Or why it's green. The speedrun is a 4e19 FLOPs capability model so it's a bit like talking to a kindergartener :).
 
+## Mamba Alternative
+
+nanochat also supports **Mamba** models, which use State Space Models (SSMs) instead of attention mechanisms. Mamba offers **linear O(n) complexity** compared to the **quadratic O(n²) complexity** of transformers, making it much more efficient for long sequences:
+
+```bash
+# Train a Mamba model instead of GPT
+bash runpod_mamba_train.sh
+
+# Chat with your Mamba model
+python -m scripts.chat_cli --model_type=mamba
+python -m scripts.chat_web --model_type=mamba
+```
+
+**Mamba Advantages:**
+- 🚀 Linear complexity scaling with sequence length
+- 💾 More memory efficient for long sequences  
+- ⚡ Faster inference on long contexts
+- 🔄 Same training pipeline as GPT models
+
 ---
 
 <img width="2672" height="1520" alt="image" src="https://github.com/user-attachments/assets/ed39ddf8-2370-437a-bedc-0f39781e76b5" />

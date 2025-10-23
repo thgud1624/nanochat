@@ -15,6 +15,7 @@ import wandb
 import torch
 
 from nanochat.gpt import GPT, GPTConfig
+from nanochat.mamba import MambaModel, MambaConfig
 from nanochat.dataloader import tokenizing_distributed_data_loader
 from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir
 from nanochat.tokenizer import get_tokenizer, get_token_bytes
@@ -28,6 +29,7 @@ print_banner()
 # User settings
 run = "dummy" # wandb run name default ("dummy" is special - we won't log to wandb)
 # Model architecture
+model_type = "gpt" # model architecture: "gpt" or "mamba"
 depth = 20 # the depth of the Transformer model to train, rest of the kwargs are derived
 max_seq_len = 2048 # max context length
 # Training horizon. Only one of these 3 will be used, in this order of precedence.
@@ -74,12 +76,23 @@ print0(f"Vocab size: {vocab_size:,}")
 # Model kwargs are derived from the desired depth of the model
 num_layers = depth
 model_dim = depth * 64 # aspect ratio 64 (usually this is varied from 64 -> 128 as model size increases)
-num_heads = max(1, (model_dim + 127) // 128) # head dim 128 (the division here is ceil div)
-num_kv_heads = num_heads # 1:1 MQA ratio
+
+print0(f"Model type: {model_type}")
 print0(f"num_layers: {num_layers}")
 print0(f"model_dim: {model_dim}")
-print0(f"num_heads: {num_heads}")
-print0(f"num_kv_heads: {num_kv_heads}")
+
+if model_type == "gpt":
+    num_heads = max(1, (model_dim + 127) // 128) # head dim 128 (the division here is ceil div)
+    num_kv_heads = num_heads # 1:1 MQA ratio
+    print0(f"num_heads: {num_heads}")
+    print0(f"num_kv_heads: {num_kv_heads}")
+elif model_type == "mamba":
+    d_state = 16  # SSM state expansion factor
+    d_conv = 4    # Local convolution width  
+    expand = 2    # Block expansion factor
+    print0(f"d_state: {d_state}")
+    print0(f"d_conv: {d_conv}")
+    print0(f"expand: {expand}")
 
 # Optimizer / data / training length related hyperparameters
 # figure out the needed gradient accumulation to reach the desired total batch size
@@ -92,10 +105,18 @@ print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")
 print0(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
 # -----------------------------------------------------------------------------
 # Initialize the Model
-model_config_kwargs = dict(sequence_len=max_seq_len, vocab_size=vocab_size, n_layer=num_layers, n_head=num_heads, n_kv_head=num_kv_heads, n_embd=model_dim)
-with torch.device("meta"):
-    model_config = GPTConfig(**model_config_kwargs)
-    model = GPT(model_config)
+if model_type == "gpt":
+    model_config_kwargs = dict(sequence_len=max_seq_len, vocab_size=vocab_size, n_layer=num_layers, n_head=num_heads, n_kv_head=num_kv_heads, n_embd=model_dim)
+    with torch.device("meta"):
+        model_config = GPTConfig(**model_config_kwargs)
+        model = GPT(model_config)
+elif model_type == "mamba":
+    model_config_kwargs = dict(sequence_len=max_seq_len, vocab_size=vocab_size, n_layer=num_layers, n_embd=model_dim, d_state=d_state, d_conv=d_conv, expand=expand)
+    with torch.device("meta"):
+        model_config = MambaConfig(**model_config_kwargs)
+        model = MambaModel(model_config)
+else:
+    raise ValueError(f"Unknown model_type: {model_type}. Choose 'gpt' or 'mamba'")
 model.to_empty(device="cuda")
 model.init_weights()
 orig_model = model # original, uncompiled model, for saving raw model state_dict
@@ -229,7 +250,7 @@ for step in range(num_iterations + 1):
 
     # save checkpoint at the end of the run (only on master process)
     if master_process and last_step:
-        output_dirname = model_tag if model_tag else f"d{depth}" # e.g. d12
+        output_dirname = model_tag if model_tag else f"{model_type}_d{depth}" # e.g. gpt_d12 or mamba_d12
         checkpoint_dir = os.path.join(base_dir, "base_checkpoints", output_dirname)
         save_checkpoint(
             checkpoint_dir,
